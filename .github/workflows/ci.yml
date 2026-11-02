@@ -39,13 +39,13 @@ jobs:
         run: |
           mkdir -p trivy
           for img in app-original app-hardened responder-original responder-hardened; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/trivy:/out"               aquasec/trivy:0.58.1 image --quiet --format json -o "/out/$img.json" "$img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/trivy:/out"               aquasec/trivy:0.75.0 image --quiet --format json -o "/out/$img.json" "$img"
           done
           python3 scripts/trivy_summary.py trivy/*.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Gate - hardened images must have no fixable CRITICAL vulnerability
         run: |
           for img in app-hardened responder-hardened; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1               image --quiet --severity CRITICAL --ignore-unfixed --exit-code 1 "$img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0               image --quiet --severity CRITICAL --ignore-unfixed --exit-code 1 "$img"
           done
       - uses: actions/upload-artifact@v4
         if: always()

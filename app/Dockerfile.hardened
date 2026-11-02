@@ -1,10 +1,10 @@
 # Hardened image: multi-stage build, distroless runtime (no shell, no package manager), non-root user.
-FROM python:3.11-slim AS build
+FROM python:3.13-slim AS build
 WORKDIR /src
 COPY requirements.txt .
 RUN pip install --no-cache-dir --target /deps -r requirements.txt
 
-FROM gcr.io/distroless/python3-debian12:nonroot
+FROM gcr.io/distroless/python3-debian13:nonroot
 WORKDIR /app
 ENV PYTHONPATH=/deps PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY --from=build /deps /deps
