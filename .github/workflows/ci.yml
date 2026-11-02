@@ -23,3 +23,30 @@ jobs:
         run: |
           curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
           ./kubeconform -strict -summary k8s/
+
+  # Add-on 1: image vulnerabilities before and after hardening (runs in GitHub's cloud, not on the laptop)
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the original and hardened images
+        run: |
+          docker build -t app-original app
+          docker build -t app-hardened -f app/Dockerfile.hardened app
+          docker build -t responder-original responder
+          docker build -t responder-hardened -f responder/Dockerfile.hardened responder
+      - name: Scan with Trivy
+        run: |
+          mkdir -p trivy
+          for img in app-original app-hardened responder-original responder-hardened; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/trivy:/out"               aquasec/trivy:0.58.1 image --quiet --format json -o "/out/$img.json" "$img"
+          done
+          python3 scripts/trivy_summary.py trivy/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Gate - hardened images must have no fixable CRITICAL vulnerability
+        run: |
+          for img in app-hardened responder-hardened; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1               image --quiet --severity CRITICAL --ignore-unfixed --exit-code 1 "$img"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: trivy-reports, path: trivy/ }
