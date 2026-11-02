@@ -42,6 +42,19 @@ Laptop: Ryzen 7 4800H, WSL 2 (kernel 6.18), k3d v5.9 (k3s v1.35), Falco 0.45.2 (
 
 **Measured caveats:** the two latencies compare Falco's event timestamp with the responder's clock on the same machine. On the WSL kernel, Falco logs that some syscall tracepoints are missing: its TOCTOU mitigation for `open`/`connect` is off, detection works (shown above).
 
+## Add-on 1 ✅: image vulnerabilities before / after hardening (Trivy in CI)
+
+Every push builds each image twice: the original (`python:3.13-slim`) and a hardened one (`Dockerfile.hardened`: multi-stage build, **distroless** runtime with no shell and no package manager, non-root user). Trivy 0.75 scans both; CI fails if a hardened image has a fixable CRITICAL vulnerability.
+
+| Image (same app, same Python 3.13) | CRITICAL | HIGH | MEDIUM | LOW | fixable HIGH+CRIT |
+|---|---|---|---|---|---|
+| original (`python:3.13-slim`, Debian 13) | 0 | 53 | 76 | 63 | 8 |
+| hardened (distroless Debian 13, non-root) | 0 | **32** | 111 | 54 | **3** |
+
+- **HIGH −40 %, fixable HIGH/CRITICAL 8 → 3.** MEDIUM goes up (the distroless Python image ships some libraries the slim one doesn't); that trade-off is stated, not hidden.
+- **Lesson from the first run:** my first "hardened" image used distroless *Debian 12* + Python 3.11 and had **more** vulnerabilities (48 fixable vs 8): an older base erases the benefit of a smaller one. The fair comparison keeps the same Debian and Python versions.
+- **Defence in depth:** the hardened image has **no shell at all**, so the attack in this demo (`kubectl exec … sh`) fails before Falco even needs to act. The demo keeps the original image on purpose, so there is something to detect.
+
 ## What it is, honestly
 - **Detection** happens in the kernel: Falco's eBPF probe sees the `execve` of a shell attached to a terminal inside a container, and enriches it with the pod name and namespace from containerd.
 - **Response is containment, not remediation.** Deleting the pod cuts the live session and discards anything the attacker changed in the pod; Kubernetes starts a clean copy. The weakness that let the attacker in is **still in the image**: fixing it is the job of image scanning and admission policies (planned add-ons). Decision record: [docs/decisions/0001](docs/decisions/0001-containment-by-pod-deletion.md).
@@ -60,7 +73,7 @@ bash scripts/down.sh      # delete everything
 Unit tests (no cluster): `pytest -q tests`.
 
 ## Next add-ons (each only after the previous one works)
-Trivy in CI (CVEs before/after hardening) → more scenarios + false-positive tuning log → Loki + Grafana → Sigma → LogQL → n8n replacing the responder → Kyverno blocking privileged pods.
+more scenarios + false-positive tuning log → Loki + Grafana → Sigma → LogQL → n8n replacing the responder → Kyverno blocking privileged pods.
 
 ---
 
