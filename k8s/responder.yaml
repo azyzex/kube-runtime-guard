@@ -1,0 +1,60 @@
+# The responder: receives Falcosidekick webhooks, may delete pods ONLY in namespace "shop".
+apiVersion: v1
+kind: Namespace
+metadata: { name: guard-system }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: responder, namespace: guard-system }
+---
+# Least privilege: a Role in "shop" only (not a ClusterRole), verbs get + delete on pods only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: pod-deleter, namespace: shop }
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: responder-pod-deleter, namespace: shop }
+subjects: [{ kind: ServiceAccount, name: responder, namespace: guard-system }]
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: pod-deleter }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: responder, namespace: guard-system }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: responder } }
+  template:
+    metadata: { labels: { app: responder } }
+    spec:
+      serviceAccountName: responder
+      containers:
+        - name: responder
+          image: responder:0.1
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: PROTECTED_NAMESPACES, value: "shop" }
+            - { name: RESPOND_RULES, value: "Terminal shell in container" }
+            - { name: COOLDOWN_S, value: "30" }
+            - { name: DRY_RUN, value: "false" }
+          volumeMounts: [{ name: slack, mountPath: /secrets, readOnly: true }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 2 }
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { memory: 128Mi }
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true }
+      volumes:
+        - name: slack
+          secret: { secretName: slack-webhook, optional: true }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: responder, namespace: guard-system }
+spec:
+  selector: { app: responder }
+  ports: [{ port: 8080, targetPort: 8080 }]

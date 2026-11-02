@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - name: Responder unit tests
+        run: |
+          pip install -r responder/requirements.txt pytest
+          pytest -q tests
+      - name: Build images
+        run: |
+          docker build -t orders-api:ci app
+          docker build -t responder:ci responder
+      - name: Validate Kubernetes manifests
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary k8s/

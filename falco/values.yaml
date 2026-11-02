@@ -1,0 +1,27 @@
+# Falco on k3d (WSL2 kernel 6.18, BTF present -> modern eBPF driver, no kernel module to build).
+driver:
+  kind: modern_ebpf
+
+tty: true
+
+falco:
+  json_output: true
+  json_include_output_property: true
+
+collectors:
+  # pod name + namespace come from k3s's containerd via the container plugin (default sockets include
+  # /run/k3s/containerd/containerd.sock). The extra k8s-metacollector is not needed here: saves RAM.
+  kubernetes:
+    enabled: false
+
+falcosidekick:
+  enabled: true
+  replicaCount: 1   # the chart default is 2; one is enough on a laptop
+  config:
+    slack:
+      # webhookurl is passed at install time from ~/.secrets/slack-webhook (never stored in Git)
+      minimumpriority: notice
+      outputformat: all
+    webhook:
+      address: http://responder.guard-system.svc.cluster.local:8080/falco
+      minimumpriority: notice
