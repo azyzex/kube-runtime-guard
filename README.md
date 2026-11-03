@@ -55,6 +55,23 @@ Every push builds each image twice: the original (`python:3.13-slim`) and a hard
 - **Lesson from the first run:** my first "hardened" image used distroless *Debian 12* + Python 3.11 and had **more** vulnerabilities (48 fixable vs 8): an older base erases the benefit of a smaller one. The fair comparison keeps the same Debian and Python versions.
 - **Defence in depth:** the hardened image has **no shell at all**, so the attack in this demo (`kubectl exec … sh`) fails before Falco even needs to act. The demo keeps the original image on purpose, so there is something to detect.
 
+## Add-on 2 ✅: more scenarios + false-positive tuning (tested end to end in CI)
+
+Every PR now runs the **whole project on a real cluster in GitHub Actions** (`e2e.yml`: k3d + Falco modern eBPF + Falcosidekick + responder) and replays these scenarios (`scripts/scenarios.sh`, results in [`results/scenarios.md`](results/scenarios.md)):
+
+| # | Scenario | Falco rule | Responder decision | syscall → responder | Pod survived |
+|---|---|---|---|---|---|
+| S1 | interactive shell (attacker) | Terminal shell in container | **delete** (containment) | 0.036 s | no, replaced |
+| S2 | read `/etc/shadow` | Read sensitive file untrusted | alert only | 0.017 s | yes |
+| S3 | search for private keys | Search Private Keys or Passwords | alert only | 0.011 s | yes |
+| FP | operator's sanctioned debug shell | Terminal shell in container | **ignored: break-glass** | 0.012 s | yes |
+
+**False-positive tuning log**
+1. *Problem:* the only automatic action (delete the pod) also fires when an operator legitimately opens a shell to debug. Killing their session would make the tool something people disable.
+2. *Options:* turn the rule off (loses detection); exclude by user (Falco sees the container's root user, not the human); mark the pod.
+3. *Choice:* a pod label `guard.fibertwin.io/break-glass=true`. Falco **still alerts** (audit trail in Slack), the responder **does not delete**. The label is set on purpose, visibly, by someone with RBAC on pods.
+4. *Why S2/S3 are alert-only:* reading a secret or searching for keys is serious but often investigative; automatic deletion would destroy evidence. Only an interactive shell (an attacker inside, now) justifies instant containment.
+
 ## What it is, honestly
 - **Detection** happens in the kernel: Falco's eBPF probe sees the `execve` of a shell attached to a terminal inside a container, and enriches it with the pod name and namespace from containerd.
 - **Response is containment, not remediation.** Deleting the pod cuts the live session and discards anything the attacker changed in the pod; Kubernetes starts a clean copy. The weakness that let the attacker in is **still in the image**: fixing it is the job of image scanning and admission policies (planned add-ons). Decision record: [docs/decisions/0001](docs/decisions/0001-containment-by-pod-deletion.md).
@@ -73,7 +90,7 @@ bash scripts/down.sh      # delete everything
 Unit tests (no cluster): `pytest -q tests`.
 
 ## Next add-ons (each only after the previous one works)
-more scenarios + false-positive tuning log → Loki + Grafana → Sigma → LogQL → n8n replacing the responder → Kyverno blocking privileged pods.
+Loki + Grafana → Sigma → LogQL → n8n replacing the responder → Kyverno blocking privileged pods.
 
 ---
 

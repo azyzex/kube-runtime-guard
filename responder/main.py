@@ -30,6 +30,9 @@ PROTECTED_NAMESPACES = {n.strip() for n in os.getenv("PROTECTED_NAMESPACES", "sh
 COOLDOWN_S = float(os.getenv("COOLDOWN_S", "30"))
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 SLACK_FILE = os.getenv("SLACK_WEBHOOK_FILE", "/secrets/slack-webhook")
+# false-positive tuning (add-on 2): an operator's sanctioned debug session is labelled on the pod;
+# Falco still alerts (audit trail), but the responder does not kill it
+BREAK_GLASS_LABEL = os.getenv("BREAK_GLASS_LABEL", "guard.fibertwin.io/break-glass")
 
 SA = "/var/run/secrets/kubernetes.io/serviceaccount"
 API = f"https://{os.getenv('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{os.getenv('KUBERNETES_SERVICE_PORT', '443')}"
@@ -62,6 +65,23 @@ def k8s_delete_pod(ns: str, pod: str) -> int:
             return r.status
     except HTTPError as e:
         return e.code
+
+
+def k8s_pod_labels(ns: str, pod: str) -> dict:
+    token = open(f"{SA}/token").read()
+    ctx = ssl.create_default_context(cafile=f"{SA}/ca.crt")
+    req = urllib.request.Request(f"{API}/api/v1/namespaces/{ns}/pods/{pod}",
+                                 headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as r:
+            return json.loads(r.read()).get("metadata", {}).get("labels", {}) or {}
+    except Exception:
+        return {}
+
+
+def break_glass(labels: dict) -> bool:
+    """Pure: is this pod in a sanctioned operator session?"""
+    return str(labels.get(BREAK_GLASS_LABEL, "")).lower() == "true"
 
 
 def slack(text: str) -> None:
@@ -103,6 +123,9 @@ async def falco(request: Request) -> dict:
     except Exception:
         record["alert_latency_s"] = None
 
+    if decision == "delete" and break_glass(k8s_pod_labels(ns, pod)):
+        decision = record["decision"] = "ignored: break-glass pod (sanctioned operator session)"
+        slack(f":unlock: `{ns}/{pod}`: {alert.get('rule')} during a break-glass session. Not contained; kept for audit.")
     if decision == "delete":
         _last_action[f"{ns}/{pod}"] = received
         status = k8s_delete_pod(ns, pod)

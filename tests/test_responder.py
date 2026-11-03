@@ -54,3 +54,10 @@ def test_falco_time_nanoseconds():
     import main
     assert abs(main.parse_falco_time("2026-11-02T20:00:00.123456789Z") - 1793649600.123456) < 1e-5
     assert main.parse_falco_time("2026-11-02T20:00:00Z") == 1793649600.0
+
+
+def test_break_glass_label(monkeypatch):
+    m = load(monkeypatch)
+    assert m.break_glass({"guard.fibertwin.io/break-glass": "true"})
+    assert not m.break_glass({"guard.fibertwin.io/break-glass": "false"})
+    assert not m.break_glass({})
