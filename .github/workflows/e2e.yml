@@ -1,0 +1,32 @@
+name: e2e
+
+# The whole small project on a real cluster in the cloud: k3d + Falco (modern eBPF; GitHub's Ubuntu
+# kernel has BTF) + Falcosidekick + responder, then the attack scenarios and the false-positive case.
+on:
+  workflow_dispatch:
+  pull_request:
+  push: { branches: [main] }
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools (k3d, kubectl, helm)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          kubectl version --client
+      - name: Deploy (cluster, app, responder, Falco)
+        run: bash scripts/up.sh
+      - name: Attack scenarios + false positive
+        run: bash scripts/scenarios.sh
+      - name: Summary
+        if: always()
+        run: |
+          cat results/scenarios.md >> "$GITHUB_STEP_SUMMARY" || true
+          kubectl -n guard-system logs deploy/responder --tail=20 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: scenarios, path: results/ }
